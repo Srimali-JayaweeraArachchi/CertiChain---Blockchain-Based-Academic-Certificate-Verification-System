@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>CertiChain</title>
+  <script src="https://cdn.jsdelivr.net/npm/ethers@6.13.4/dist/ethers.umd.min.js"></script>
+  <style>
+    body { font-family: sans-serif; max-width: 700px; margin: 30px auto; }
+    fieldset { margin-bottom: 20px; padding: 15px; }
+    input, button { margin: 5px 0; display: block; }
+    #out, #issueOut { font-weight: bold; white-space: pre-line; }
+  </style>
+</head>
+<body>
+  <h1>CertiChain</h1>
+
+  <fieldset>
+    <legend>Issue certificate (Institution)</legend>
+    <input type="file" id="issueFile" />
+    <input type="text" id="studentId" placeholder="Student ID (EG/2021/xxxx)" />
+    <input type="text" id="program" placeholder="Program (BSc Engineering)" />
+    <button onclick="issue()">Issue on blockchain</button>
+    <div id="issueOut"></div>
+  </fieldset>
+
+  <fieldset>
+    <legend>Verify certificate (Anyone)</legend>
+    <input type="file" id="verifyFile" />
+    <button onclick="verify()">Verify</button>
+    <div id="out"></div>
+  </fieldset>
+
+<script>
+let info;
+async function load() { info = await (await fetch("contract.json")).json(); }
+load();
+
+async function sha256(file) {
+  const buf = await file.arrayBuffer();
+  const d = await crypto.subtle.digest("SHA-256", buf);
+  return "0x" + [...new Uint8Array(d)].map(b => b.toString(16).padStart(2, "0")).join("");
+}
+
+async function issue() {
+  const out = document.getElementById("issueOut");
+  try {
+    const f = document.getElementById("issueFile").files[0];
+    if (!f) return (out.textContent = "Select a file");
+    const h = await sha256(f);
+    const provider = new ethers.BrowserProvider(window.ethereum);
+    const signer = await provider.getSigner();
+    const c = new ethers.Contract(info.address, info.abi, signer);
+    const tx = await c.issueCertificate(
+      h, document.getElementById("studentId").value, document.getElementById("program").value);
+    out.textContent = "Waiting for confirmation...";
+    await tx.wait();
+    out.textContent = "Issued!\nHash: " + h + "\nTx: " + tx.hash;
+  } catch (e) { out.textContent = "Error: " + (e.reason || e.message); }
+}
+
+async function verify() {
+  const out = document.getElementById("out");
+  try {
+    const f = document.getElementById("verifyFile").files[0];
+    if (!f) return (out.textContent = "Select a file");
+    const h = await sha256(f);
+    const provider = new ethers.JsonRpcProvider("http://127.0.0.1:8545");
+    const c = new ethers.Contract(info.address, info.abi, provider);
+    const r = await c.verifyCertificate(h);
+    if (!r.exists) out.textContent = "❌ NOT FOUND / TAMPERED";
+    else if (r.revoked) out.textContent = "⚠️ REVOKED";
+    else out.textContent = "✅ VALID\nStudent: " + r.studentId + "\nProgram: " + r.program +
+      "\nIssuer: " + r.issuer + "\nIssued: " + new Date(Number(r.issuedAt) * 1000).toLocaleString();
+  } catch (e) { out.textContent = "Error: " + (e.reason || e.message); }
+}
+</script>
+</body>
+</html>
